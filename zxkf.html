@@ -1,0 +1,374 @@
+<html><head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=1" name="viewport">
+  <meta content="yes" name="apple-mobile-web-app-capable">
+  <meta content="yes" name="apple-touch-fullscreen">
+  <meta content="black" name="apple-mobile-web-app-status-bar-style">
+  <title>官方认证-安全访问</title>
+<style>
+/* 基础样式保持不变 */
+.loading-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    background-color: #f8f9fa;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    transition: opacity 0.5s ease-out;
+}
+.security-text {
+    font-size: 24px;
+    color: #28a745;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+}
+.security-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background-color: #28a745;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 30px;
+    margin-bottom: 15px;
+    transition: background-color 0.3s ease;
+}
+.error-icon {
+    background-color: #dc3545;
+}
+.loading-tip {
+    color: #6c757d;
+    font-size: 14px;
+    text-align: center;
+    padding: 0 20px;
+}
+.time-remaining {
+    color: #6c757d;
+    font-size: 14px;
+    margin-top: 10px;
+}
+.decode-countdown {
+    color: #28a745;
+    font-size: 16px;
+    margin-top: 10px;
+    font-weight: bold;
+}
+/* 关键修改：移除可能阻止交互的样式 */
+.content-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* 移除overflow: hidden以允许滚动 */
+    z-index: 1;
+}
+.iframe-content {
+    width: 100%;
+    height: 100%;
+    border: none;
+    opacity: 0;
+    transition: opacity 0.5s ease-in;
+    /* 添加pointer-events确保鼠标事件能穿透到iframe */
+    pointer-events: auto;
+}
+.iframe-content.loaded {
+    opacity: 1;
+}
+.error-container {
+    display: none;
+    text-align: center;
+    padding: 20px;
+}
+.error-retry {
+    margin-top: 20px;
+    padding: 8px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.error-retry:hover {
+    background-color: #0056b3;
+}
+/* 添加触摸设备支持的样式 */
+@media (max-width: 768px) {
+    .iframe-content {
+        /* 在移动设备上确保iframe可以正确接收触摸事件 */
+        touch-action: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+</style>
+<style type="text/css" id="__via_marker__"></style></head>
+<body>
+<!-- 保持原有的HTML结构 -->
+<div class="loading-container" id="loadingContainer">
+    <div class="security-icon">✓</div>
+    <div class="security-text">官方安全验证</div>
+    <div class="loading-tip">正在进行用户身份认证与安全协议验证，请稍候...</div>
+    <div class="decode-countdown">正在为您转接人工客服，倒计时 <span id="decodeTimer">1</span> 秒</div>
+    <div class="time-remaining">页面有效期剩余 <span id="timeLeft">279</span> 秒</div>
+</div>
+<div class="content-container" id="contentContainer">
+    <!-- iframe将被动态插入到这里 -->
+</div>
+<div class="error-container" id="errorContainer">
+    <div class="security-icon error-icon">!</div>
+    <div class="security-text" style="color: #dc3545;">加载失败</div>
+    <div class="loading-tip">缺少必要参数 联系 @Sadzc8</div>
+    <button class="error-retry" onclick="retryLoad()">重试</button>
+</div>
+<script>
+// 1. 核心优化：新增状态标记与合法URL缓存
+// 域名白名单：替换为实际允许访问的域名（支持二级域名匹配）
+const ALLOWED_DOMAINS = [
+    "shangxin.sbs",    // 示例域名1
+    "sad6.sbs", // 示例域名2
+    "", // 示例域名3
+    "" //示例域名4
+];
+// 检测状态标记：true=已通过校验，false=未校验/校验失败
+let isDomainChecked = false;
+// 合法URL缓存：存储已通过校验的目标链接，避免重复解码
+let validTargetUrl = "";
+
+// 页面有效期倒计时逻辑保持不变
+let timeLeft = 281;
+const timeLeftElement = document.getElementById('timeLeft');
+let countdownTimer;
+if (timeLeftElement) {
+    countdownTimer = setInterval(() => {
+        timeLeft--;
+        timeLeftElement.textContent = timeLeft;
+        
+        if (timeLeft <= 0) {
+            clearInterval(countdownTimer);
+            showError("页面已过期，请重新访问");
+        }
+    }, 1000);
+}
+
+// 解码倒计时逻辑保持不变
+let decodeSeconds = 3;
+const decodeTimerElement = document.getElementById('decodeTimer');
+let decodeCountdown;
+decodeCountdown = setInterval(() => {
+    decodeSeconds--;
+    decodeTimerElement.textContent = decodeSeconds;
+    
+    if (decodeSeconds <= 0) {
+        clearInterval(decodeCountdown);
+        processEncodedUrl();
+    }
+}, 1000);
+
+// 2. 核心优化：processEncodedUrl函数（提前判断状态，减少重复检测）
+function processEncodedUrl() {
+    // 优先使用缓存：已通过校验则直接加载，跳过解码和检测
+    if (isDomainChecked && validTargetUrl) {
+        loadIframe(validTargetUrl);
+        return;
+    }
+
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const encodedParam = urlParams.get('api');
+        
+        document.querySelector('.loading-tip').textContent = "正在为您转接人工...";
+        
+        if (!encodedParam) {
+            throw new Error("未找到编码参数");
+        }
+        
+        let trueUrl = atob(encodedParam);
+        try {
+            new URL(trueUrl);
+        } catch (e) {
+            throw new Error("无效的URL格式");
+        }
+
+        // 域名校验（仅首次执行，成功后缓存结果）
+        const targetUrl = new URL(trueUrl);
+        const targetDomain = targetUrl.hostname;
+        const isDomainAllowed = ALLOWED_DOMAINS.some(allowedDomain => 
+            targetDomain === allowedDomain || targetDomain.endsWith(`.${allowedDomain}`)
+        );
+        
+        if (!isDomainAllowed) {
+            throw new Error(`该域名无权使用此接口（${targetDomain}），请联系伤心TG@Sadzc8 添加调用权限`);
+        }
+
+        // 校验通过：更新状态与缓存，后续无需重复检测
+        isDomainChecked = true;
+        validTargetUrl = trueUrl;
+
+        loadIframe(trueUrl);
+    } catch (e) {
+        console.error("解码过程出错:", e);
+        // 校验失败：重置状态，允许下次重试时重新检测
+        isDomainChecked = false;
+        validTargetUrl = "";
+        showError(`解码失败: ${e.message}`);
+    }
+}
+
+// iframe加载逻辑保持不变
+function loadIframe(url) {
+    const contentContainer = document.getElementById('contentContainer');
+    const loadingContainer = document.getElementById('loadingContainer');
+    const errorContainer = document.getElementById('errorContainer');
+    
+    errorContainer.style.display = "none";
+    
+    // 移除旧的iframe
+    const oldIframe = document.querySelector('.iframe-content');
+    if (oldIframe) {
+        oldIframe.remove();
+    }
+    
+    // 创建新的iframe
+    const iframe = document.createElement('iframe');
+    iframe.className = 'iframe-content';
+    iframe.src = url;
+    iframe.title = "嵌入内容";
+    // 关键属性：允许iframe中的所有交互功能
+    iframe.allow = "geolocation; microphone; camera; payment";
+    // 确保在iOS上正常工作
+    iframe.scrolling = "yes";
+    iframe.setAttribute('webkitallowfullscreen', 'true');
+    iframe.setAttribute('mozallowfullscreen', 'true');
+    iframe.setAttribute('allowfullscreen', 'true');
+    
+    // 加载完成后显示
+    iframe.onload = function() {
+        setTimeout(() => {
+            iframe.classList.add('loaded');
+        }, 100);
+        
+        // 检查是否同源，如果是则可以进行更深度的交互控制
+        setupIframeInteraction(iframe);
+        
+        console.log("iframe加载完成:", url);
+    };
+    
+    // 错误处理
+    iframe.onerror = function() {
+        showError("无法加载目标页面，可能存在跨域限制或链接无效");
+        if (iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+        }
+    };
+    
+    contentContainer.appendChild(iframe);
+    
+    // 隐藏加载动画
+    loadingContainer.style.opacity = "0";
+    setTimeout(() => {
+        loadingContainer.style.display = "none";
+    }, 500);
+}
+
+// iframe交互逻辑保持不变
+function setupIframeInteraction(iframe) {
+    try {
+        // 检查是否同源
+        let isSameOrigin = false;
+        try {
+            const iframeOrigin = new URL(iframe.src).origin;
+            isSameOrigin = window.location.origin === iframeOrigin;
+        } catch (e) {
+            console.log('无法验证同源性:', e);
+        }
+        // 对于同源iframe，可以完全控制交互
+        if (isSameOrigin) {
+            console.log('同源iframe，交互功能将正常工作');
+            
+            // 确保iframe内容可以滚动
+            const setIframeScrollable = () => {
+                try {
+                    const doc = iframe.contentDocument || iframe.contentWindow.document;
+                    doc.body.style.overflow = 'auto';
+                    doc.documentElement.style.overflow = 'auto';
+                } catch (e) {
+                    console.log('设置iframe滚动失败:', e);
+                }
+            };
+            
+            // 立即设置一次
+            setIframeScrollable();
+            // 延迟再设置一次，确保内容已加载
+            setTimeout(setIframeScrollable, 1000);
+        } else {
+            console.log('跨域iframe，浏览器安全限制可能影响交互');
+        }
+        
+        // 通用：确保父页面不拦截触摸事件
+        document.body.style.touchAction = 'auto';
+        document.documentElement.style.touchAction = 'auto';
+        
+    } catch (e) {
+        console.log('设置iframe交互失败:', e);
+    }
+}
+
+// 显示错误信息逻辑保持不变
+function showError(message) {
+    clearInterval(countdownTimer);
+    clearInterval(decodeCountdown);
+    
+    const loadingContainer = document.getElementById('loadingContainer');
+    const errorContainer = document.getElementById('errorContainer');
+    
+    loadingContainer.style.display = "none";
+    errorContainer.querySelector('.loading-tip').textContent = message;
+    errorContainer.style.display = "flex";
+    errorContainer.style.flexDirection = "column";
+    errorContainer.style.justifyContent = "center";
+    errorContainer.style.alignItems = "center";
+    errorContainer.style.width = "100%";
+    errorContainer.style.height = "100%";
+    errorContainer.style.position = "absolute";
+    errorContainer.style.top = "0";
+    errorContainer.style.left = "0";
+    errorContainer.style.backgroundColor = "#f8f9fa";
+    errorContainer.style.zIndex = "9999";
+}
+
+// 3. 核心优化：retryLoad函数（判断参数变化，避免无效检测）
+function retryLoad() {
+    const contentContainer = document.getElementById('contentContainer');
+    contentContainer.innerHTML = '';
+    
+    const loadingContainer = document.getElementById('loadingContainer');
+    loadingContainer.style.display = "flex";
+    loadingContainer.style.opacity = "1";
+    document.querySelector('.loading-tip').textContent = "正在重新加载...";
+
+    // 对比当前与缓存的URL参数：参数未变则沿用结果，参数变化则重置状态
+    const currentEncodedParam = new URLSearchParams(window.location.search).get('c');
+    const lastEncodedParam = validTargetUrl ? btoa(validTargetUrl) : "";
+
+    if (currentEncodedParam === lastEncodedParam) {
+        // 参数未变：直接执行（若之前校验失败，会重新检测；若成功，直接加载）
+        setTimeout(processEncodedUrl, 1000);
+    } else {
+        // 参数变化：重置状态，重新解码检测
+        isDomainChecked = false;
+        validTargetUrl = "";
+        setTimeout(processEncodedUrl, 1000);
+    }
+}
+</script>
+
+</body></html>
